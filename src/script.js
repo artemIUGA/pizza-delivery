@@ -1,4 +1,25 @@
+// Инициализируем Telegram WebApp SDK и безопасно работаем вне Telegram.
+var telegramWebApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+var user = telegramWebApp && telegramWebApp.initDataUnsafe ? telegramWebApp.initDataUnsafe.user : null;
+var userName = user && user.first_name ? user.first_name : "Гость";
+var userId = user && user.id ? user.id : null;
+
+if (telegramWebApp) {
+  telegramWebApp.ready();
+  telegramWebApp.expand();
+}
+
+console.log("Telegram WebApp SDK initialized");
+console.log("User:", user);
+console.log("Theme:", telegramWebApp ? telegramWebApp.themeParams : undefined);
+
 document.addEventListener("DOMContentLoaded", function () {
+  var welcomeMessageElement = document.getElementById("welcome-message");
+
+  if (welcomeMessageElement) {
+    welcomeMessageElement.textContent = "Привет, " + userName + "! 👋";
+  }
+
   // Поддерживаем и старый ключ корзины, и новый ключ мини-приложения.
   var STORAGE_KEYS = ["cart", "pizza-mini-cart"];
   var cartPage = document.querySelector("[data-page='cart']");
@@ -473,6 +494,11 @@ document.addEventListener("DOMContentLoaded", function () {
     var phoneInput = document.getElementById("customer-phone");
     var addressInput = document.getElementById("customer-address");
     var commentInput = document.getElementById("customer-comment");
+
+    // Автоматически подставляем имя из Telegram в форму заказа.
+    if (nameInput && userName) {
+      nameInput.value = userName;
+    }
 
     if (backToCartButton) {
       backToCartButton.addEventListener("click", function () {
