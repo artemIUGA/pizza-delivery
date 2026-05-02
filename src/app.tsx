@@ -570,7 +570,10 @@ function App() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/80">Мини-приложение</p>
-              <h1 className="mt-1 text-2xl font-extrabold text-white">Доставка пиццы</h1>
+              <h1 className="mt-1 text-2xl font-extrabold text-white">Доставка пиццы 🍕</h1>
+              <p id="welcome-message" style={{ textAlign: "center", fontSize: "18px", color: "#666" }}>
+                Привет, {displayName}! 👋
+              </p>
               <p className="mt-1 text-sm text-white/85">Горячо и быстро для тебя, {displayName}</p>
             </div>
             {user.photo_url ? (
