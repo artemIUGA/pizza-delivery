@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Заказ принят</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="success-page-body">
+  <main class="success-page" data-page="success">
+    <section class="success-card">
+      <div class="success-icon">✅</div>
+      <h1 class="success-title">Заказ принят!</h1>
+      <p class="success-subtitle">Спасибо за ваш заказ!</p>
+
+      <section class="success-info">
+        <div class="success-info__row">
+          <span>Номер заказа:</span>
+          <strong id="success-order-number">#00000</strong>
+        </div>
+        <div class="success-info__row">
+          <span>Дата и время:</span>
+          <strong id="success-order-datetime">--.--.----, --:--</strong>
+        </div>
+        <div class="success-info__row">
+          <span>Итоговая сумма:</span>
+          <strong id="success-order-total">0 ₽</strong>
+        </div>
+      </section>
+
+      <section class="success-details">
+        <h2>Детали заказа:</h2>
+        <ul class="success-order-list" id="success-order-items"></ul>
+        <div class="success-details__grid">
+          <div class="success-details__item">
+            <span>Имя клиента</span>
+            <strong id="success-customer-name">—</strong>
+          </div>
+          <div class="success-details__item">
+            <span>Телефон</span>
+            <strong id="success-customer-phone">—</strong>
+          </div>
+          <div class="success-details__item">
+            <span>Адрес доставки</span>
+            <strong id="success-customer-address">—</strong>
+          </div>
+          <div class="success-details__item">
+            <span>Комментарий</span>
+            <strong id="success-customer-comment">—</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="success-message">
+        <p>Ожидайте звонка от оператора в течение 15 минут.</p>
+        <p>Доставка займёт 30-40 минут.</p>
+      </section>
+
+      <div class="success-actions">
+        <button class="success-primary-button" id="success-home-button" type="button">Вернуться на главную</button>
+        <button class="success-secondary-button" id="success-menu-button" type="button">Посмотреть меню</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+</html>

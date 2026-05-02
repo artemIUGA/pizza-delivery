@@ -1,1 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Корзина</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body class="cart-page-body">
+  <main class="cart-page" data-page="cart">
+    <header class="cart-header">
+      <div>
+        <h1>Корзина 🛒</h1>
+        <p>Проверьте состав заказа перед оформлением.</p>
+      </div>
+      <button class="back-button" id="back-to-home" type="button">← Назад</button>
+    </header>
 
+    <section class="cart-layout">
+      <div id="cart-empty" class="cart-empty" hidden>
+        <div class="cart-empty__icon">🛒</div>
+        <h2 class="cart-empty__title">Корзина пуста</h2>
+        <p class="cart-empty__text">Добавьте любимые пиццы, и они появятся здесь.</p>
+        <button class="back-to-menu-button" id="back-to-menu" type="button">Вернуться в меню</button>
+      </div>
+
+      <section id="cart-items" class="cart-items" aria-label="Список товаров"></section>
+
+      <section class="cart-summary">
+        <div class="cart-total-row">
+          <span>Итого:</span>
+          <strong id="cart-total">0 ₽</strong>
+        </div>
+        <button class="checkout-button" id="checkout-button" type="button">Оформить заказ</button>
+        <button class="clear-cart-button" id="clear-cart-button" type="button">Очистить корзину</button>
+      </section>
+    </section>
+  </main>
+
+  <script src="./script.js"></script>
+</body>
+</html>
