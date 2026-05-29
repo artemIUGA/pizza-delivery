@@ -3,7 +3,8 @@ const { useEffect, useMemo, useRef, useState } = React;
 type Category = "Pizza" | "Drinks" | "Snacks" | "Desserts";
 type Tab = "home" | "favorites" | "profile";
 type PizzaSize = "S" | "M" | "L";
-type Screen = "shop" | "payment";
+type Screen = "shop" | "order" | "payment";
+type OrderField = "name" | "phone" | "address" | "comment";
 type PaymentField = "cardNumber" | "cardHolder" | "expiry" | "cvv";
 
 type TelegramUser = {
@@ -32,8 +33,24 @@ type CartItem = {
 };
 
 type ProductSelections = Record<number, { size: PizzaSize; quantity: number }>;
+type OrderFormData = Record<OrderField, string>;
+type OrderErrors = Partial<Record<OrderField, string>>;
 type PaymentFormData = Record<PaymentField, string>;
 type PaymentErrors = Partial<Record<PaymentField, string>>;
+type OrderNotificationPayload = {
+  customer: string;
+  phone: string;
+  items: Array<{
+    name: string;
+    size: PizzaSize;
+    quantity: number;
+    price: number;
+  }>;
+  total: number;
+  deliveryFee: number;
+  address: string;
+  comment: string;
+};
 
 declare global {
   interface Window {
@@ -128,6 +145,12 @@ const motion = motionLibrary.motion || {
   button: "button"
 };
 const AnimatePresence = motionLibrary.AnimatePresence || (({ children }: { children: React.ReactNode }) => <>{children}</>);
+const initialOrderForm: OrderFormData = {
+  name: "",
+  phone: "",
+  address: "",
+  comment: ""
+};
 const initialPaymentForm: PaymentFormData = {
   cardNumber: "",
   cardHolder: "",
@@ -182,6 +205,8 @@ function App() {
   const [favorites, setFavorites] = useState<number[]>([]);
   const [notice, setNotice] = useState("");
   const [headerHidden, setHeaderHidden] = useState(false);
+  const [orderForm, setOrderForm] = useState<OrderFormData>(initialOrderForm);
+  const [orderErrors, setOrderErrors] = useState<OrderErrors>({});
   const [paymentForm, setPaymentForm] = useState<PaymentFormData>(initialPaymentForm);
   const [paymentErrors, setPaymentErrors] = useState<PaymentErrors>({});
   const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
@@ -395,6 +420,88 @@ function App() {
     tg?.HapticFeedback?.impactOccurred(style);
   }
 
+  function extractPhoneDigits(value: string) {
+    var digits = String(value || "").replace(/\D/g, "");
+
+    if (digits.startsWith("7")) {
+      digits = digits.slice(1);
+    }
+
+    return digits.slice(0, 10);
+  }
+
+  function formatPhoneValue(value: string) {
+    const digits = extractPhoneDigits(value);
+    let result = "+7";
+
+    if (digits.length > 0) {
+      result += " (" + digits.slice(0, 3);
+    }
+
+    if (digits.length >= 4) {
+      result += ") " + digits.slice(3, 6);
+    }
+
+    if (digits.length >= 7) {
+      result += "-" + digits.slice(6, 8);
+    }
+
+    if (digits.length >= 9) {
+      result += "-" + digits.slice(8, 10);
+    }
+
+    return result;
+  }
+
+  function updateOrderField(field: OrderField, value: string) {
+    const nextValue = field === "phone" ? formatPhoneValue(value) : value;
+
+    setOrderForm((prev) => ({
+      ...prev,
+      [field]: nextValue
+    }));
+
+    setOrderErrors((prev) => ({
+      ...prev,
+      [field]: ""
+    }));
+  }
+
+  function validateOrderForm() {
+    const nextErrors: OrderErrors = {};
+
+    if (orderForm.name.trim().length < 2) {
+      nextErrors.name = "Введите имя не короче 2 символов";
+    }
+
+    if (extractPhoneDigits(orderForm.phone).length !== 10) {
+      nextErrors.phone = "Введите полный номер телефона";
+    }
+
+    if (orderForm.address.trim().length < 10) {
+      nextErrors.address = "Введите адрес не короче 10 символов";
+    }
+
+    setOrderErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  function openOrderScreen() {
+    if (!totalItems) {
+      return;
+    }
+
+    triggerHaptic("light");
+    setCartOpen(false);
+    setOrderForm((prev) => ({
+      ...prev,
+      name: prev.name || displayName
+    }));
+    setOrderErrors({});
+    setScreen("order");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function formatCardNumber(value: string) {
     return value
       .replace(/\D/g, "")
@@ -489,12 +596,48 @@ function App() {
     return Object.keys(nextErrors).length === 0;
   }
 
+  function buildOrderNotificationPayload(): OrderNotificationPayload {
+    return {
+      customer: orderForm.name.trim() || displayName,
+      phone: orderForm.phone.trim(),
+      items: cart.map((item) => ({
+        name: item.title,
+        size: item.size,
+        quantity: item.quantity,
+        price: item.price * item.quantity
+      })),
+      total: finalTotal,
+      deliveryFee: deliveryFee,
+      address: orderForm.address.trim(),
+      comment: orderForm.comment.trim()
+    };
+  }
+
+  async function sendOrderNotification() {
+    const response = await fetch("http://localhost:3001/order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(buildOrderNotificationPayload())
+    });
+
+    if (!response.ok) {
+      throw new Error("Order notification failed with status " + response.status);
+    }
+  }
+
   function openPaymentScreen() {
     if (!totalItems) {
       return;
     }
 
-    triggerHaptic("light");
+    if (!validateOrderForm()) {
+      tg?.HapticFeedback?.notificationOccurred?.("error");
+      return;
+    }
+
+    triggerHaptic("medium");
     setCartOpen(false);
     setPaymentForm(initialPaymentForm);
     setPaymentErrors({});
@@ -510,6 +653,8 @@ function App() {
     setIsPaymentProcessing(false);
     setPaymentForm(initialPaymentForm);
     setPaymentErrors({});
+    setOrderForm(initialOrderForm);
+    setOrderErrors({});
     setActiveTab("home");
     setScreen("shop");
     setNotice("Payment completed");
@@ -526,7 +671,13 @@ function App() {
 
     setIsPaymentProcessing(true);
 
-    window.setTimeout(function () {
+    window.setTimeout(async function () {
+      try {
+        await sendOrderNotification();
+      } catch (error) {
+        console.error("Failed to send Telegram order notification:", error);
+      }
+
       setIsPaymentProcessing(false);
       setPaymentSuccess(true);
       tg?.HapticFeedback?.notificationOccurred?.("success");
@@ -707,6 +858,155 @@ function App() {
     );
   }
 
+  function renderOrderScreen() {
+    const orderSurface = theme.isDark ? "#16110f" : "#fffaf5";
+    const mutedText = theme.isDark ? "#d7b89e" : "#8a5a34";
+
+    return (
+      <div
+        className="min-h-screen pb-36"
+        style={{
+          background: `linear-gradient(180deg, ${theme.isDark ? "#120f14" : "#fff7f0"} 0%, ${theme.isDark ? "#1f1714" : "#fffaf5"} 100%)`,
+          color: theme.text
+        }}
+      >
+        <div className="mx-auto max-w-md px-4 pt-[calc(env(safe-area-inset-top)+14px)]">
+          <header className="mb-5 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic("light");
+                setScreen("order");
+              }}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#2b1608] shadow-[0_10px_26px_rgba(20,20,20,0.10)] active:scale-95"
+              aria-label="Back"
+            >
+              ←
+            </button>
+            <div>
+              <h1 className="text-2xl font-extrabold">Оформление заказа</h1>
+              <p className="text-sm" style={{ color: mutedText }}>Проверьте доставку перед оплатой</p>
+            </div>
+          </header>
+
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35 }}
+            className="mb-4 rounded-[24px] border p-4 shadow-[0_16px_34px_rgba(15,23,42,0.08)]"
+            style={{ background: orderSurface, borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffd7ba" }}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Ваш заказ</h2>
+              <span className="text-sm font-semibold" style={{ color: mutedText }}>{totalItems} шт.</span>
+            </div>
+
+            <div className="space-y-3">
+              {cart.map((item) => (
+                <div key={`${item.id}-${item.size}`} className="flex items-center gap-3">
+                  <img src={item.image} alt={item.title} className="h-14 w-14 rounded-2xl object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold">{item.title}</p>
+                    <p className="text-xs" style={{ color: mutedText }}>Размер {item.size} • {item.quantity} шт.</p>
+                  </div>
+                  <span className="text-sm font-bold">${item.price * item.quantity}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffe1c7" }}>
+              <div className="flex justify-between" style={{ color: mutedText }}>
+                <span>Пицца</span>
+                <span>${totalPrice}</span>
+              </div>
+              <div className="flex justify-between" style={{ color: mutedText }}>
+                <span>Доставка</span>
+                <span>${deliveryFee}</span>
+              </div>
+              <div className="flex justify-between text-lg font-extrabold">
+                <span>Итого</span>
+                <span>${finalTotal}</span>
+              </div>
+            </div>
+          </motion.section>
+
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.05 }}
+            className="rounded-[24px] border p-4 shadow-[0_16px_34px_rgba(15,23,42,0.08)]"
+            style={{ background: orderSurface, borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffd7ba" }}
+          >
+            <h2 className="mb-4 text-lg font-bold">Данные доставки</h2>
+
+            <div className="space-y-4">
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Имя</span>
+                <input
+                  value={orderForm.name}
+                  onChange={(event) => updateOrderField("name", event.target.value)}
+                  placeholder="Ваше имя"
+                  autoComplete="name"
+                  className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                />
+                {orderErrors.name && <p className="mt-1 text-xs font-semibold text-red-500">{orderErrors.name}</p>}
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Телефон</span>
+                <input
+                  value={orderForm.phone}
+                  onChange={(event) => updateOrderField("phone", event.target.value)}
+                  inputMode="tel"
+                  placeholder="+7 (___) ___-__-__"
+                  autoComplete="tel"
+                  className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                />
+                {orderErrors.phone && <p className="mt-1 text-xs font-semibold text-red-500">{orderErrors.phone}</p>}
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Адрес доставки</span>
+                <input
+                  value={orderForm.address}
+                  onChange={(event) => updateOrderField("address", event.target.value)}
+                  placeholder="Улица, дом, квартира"
+                  autoComplete="street-address"
+                  className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                />
+                {orderErrors.address && <p className="mt-1 text-xs font-semibold text-red-500">{orderErrors.address}</p>}
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Комментарий</span>
+                <textarea
+                  value={orderForm.comment}
+                  onChange={(event) => updateOrderField("comment", event.target.value)}
+                  rows={3}
+                  placeholder="Домофон, подъезд или пожелания"
+                  className="mt-2 w-full resize-none rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                ></textarea>
+              </label>
+            </div>
+          </motion.section>
+        </div>
+
+        <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/20 bg-white/90 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-16px_30px_rgba(15,23,42,0.10)] backdrop-blur">
+          <div className="mx-auto max-w-md">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={openPaymentScreen}
+              className="flex w-full items-center justify-center rounded-2xl bg-[#ff6900] py-4 text-base font-extrabold text-white shadow-[0_16px_32px_rgba(255,105,0,0.24)]"
+            >
+              Continue to Payment
+            </motion.button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderPaymentScreen() {
     const cardNumberPreview = paymentForm.cardNumber || "1234 5678 9012 3456";
     const cardHolderPreview = paymentForm.cardHolder || "CARD HOLDER";
@@ -738,6 +1038,27 @@ function App() {
             </button>
             <h1 className="text-2xl font-extrabold">Card Payment</h1>
           </header>
+
+          <section
+            className="mb-4 rounded-[22px] border p-4 text-sm shadow-[0_12px_28px_rgba(15,23,42,0.08)]"
+            style={{ background: paymentSurface, borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffd7ba", color: mutedText }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-bold" style={{ color: theme.text }}>Delivery details</p>
+                <p className="mt-1">{orderForm.name || displayName}</p>
+                <p>{orderForm.phone || "Phone not set"}</p>
+                <p className="line-clamp-2">{orderForm.address || "Address not set"}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScreen("order")}
+                className="shrink-0 rounded-full bg-[#fff1e6] px-3 py-1 text-xs font-bold text-[#ff6900]"
+              >
+                Edit
+              </button>
+            </div>
+          </section>
 
           <motion.div
             initial={{ opacity: 0, y: 20, rotateX: -10 }}
@@ -939,6 +1260,10 @@ function App() {
     return renderPaymentScreen();
   }
 
+  if (screen === "order") {
+    return renderOrderScreen();
+  }
+
   return (
     <div
       className="min-h-screen"
@@ -1069,7 +1394,7 @@ function App() {
                     return;
                   }
 
-                  openPaymentScreen();
+                  openOrderScreen();
                 }}
                 className="mt-4 w-full rounded-2xl bg-[#ff6900] py-3 text-sm font-semibold text-white"
               >
