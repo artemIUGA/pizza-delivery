@@ -25,8 +25,10 @@ document.addEventListener("DOMContentLoaded", function () {
   var cartPage = document.querySelector("[data-page='cart']");
   var successPage = document.querySelector("[data-page='success']");
   var orderPage = document.querySelector("[data-page='order']");
+  var mainButton = telegramWebApp && telegramWebApp.MainButton ? telegramWebApp.MainButton : null;
 
   if (successPage) {
+    hideMainButton();
     initSuccessPage();
     return;
   }
@@ -68,7 +70,7 @@ document.addEventListener("DOMContentLoaded", function () {
         return;
       }
 
-      window.location.href = "./order.html";
+      goToOrderPage("light");
     });
   }
 
@@ -111,6 +113,119 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   renderCart();
+
+  // Настраиваем главную кнопку Telegram, если она доступна.
+  function configureMainButton(text, color) {
+    if (!mainButton) {
+      return;
+    }
+
+    if (typeof mainButton.setParams === "function") {
+      mainButton.setParams({
+        text: text,
+        color: color
+      });
+      return;
+    }
+
+    if (typeof mainButton.setText === "function") {
+      mainButton.setText(text);
+    } else {
+      mainButton.text = text;
+    }
+
+    mainButton.color = color;
+  }
+
+  // Показываем главную кнопку Telegram.
+  function showMainButton() {
+    if (mainButton && typeof mainButton.show === "function") {
+      mainButton.show();
+    }
+  }
+
+  // Скрываем главную кнопку Telegram.
+  function hideMainButton() {
+    if (mainButton && typeof mainButton.hide === "function") {
+      mainButton.hide();
+    }
+  }
+
+  // Активируем главную кнопку Telegram.
+  function enableMainButton() {
+    if (mainButton && typeof mainButton.enable === "function") {
+      mainButton.enable();
+    }
+  }
+
+  // Деактивируем главную кнопку Telegram.
+  function disableMainButton() {
+    if (mainButton && typeof mainButton.disable === "function") {
+      mainButton.disable();
+    }
+  }
+
+  // Показываем loader в главной кнопке Telegram.
+  function showMainButtonProgress() {
+    if (mainButton && typeof mainButton.showProgress === "function") {
+      mainButton.showProgress();
+    }
+  }
+
+  // Скрываем loader в главной кнопке Telegram.
+  function hideMainButtonProgress() {
+    if (mainButton && typeof mainButton.hideProgress === "function") {
+      mainButton.hideProgress();
+    }
+  }
+
+  // Подключаем обработчик клика к главной кнопке Telegram.
+  function onMainButtonClick(handler) {
+    if (mainButton && typeof mainButton.onClick === "function") {
+      mainButton.onClick(handler);
+    }
+  }
+
+  // Запускаем тактильный отклик Telegram.
+  function triggerHapticFeedback(style) {
+    var hapticFeedback = telegramWebApp && telegramWebApp.HapticFeedback ? telegramWebApp.HapticFeedback : null;
+
+    if (hapticFeedback && typeof hapticFeedback.impactOccurred === "function") {
+      hapticFeedback.impactOccurred(style);
+    }
+  }
+
+  // Переходим к оформлению заказа из корзины.
+  function goToOrderPage(hapticStyle) {
+    triggerHapticFeedback(hapticStyle || "light");
+    window.location.href = "./order.html";
+  }
+
+  // Обновляем главную кнопку Telegram на странице корзины.
+  function updateCartMainButton() {
+    if (!mainButton) {
+      return;
+    }
+
+    if (!cart.length) {
+      hideMainButton();
+      return;
+    }
+
+    configureMainButton("Оформить заказ • " + calculateTotal() + "₽", "#28a745");
+    showMainButton();
+  }
+
+  if (cartPage) {
+    onMainButtonClick(function () {
+      if (!cart.length) {
+        hideMainButton();
+        return;
+      }
+
+      goToOrderPage("light");
+    });
+  }
 
   // Загружаем корзину из LocalStorage.
   function loadCart() {
@@ -284,6 +399,7 @@ document.addEventListener("DOMContentLoaded", function () {
       cartTotalElement.classList.toggle("value-updated", Boolean(options.animateTotal));
       checkoutButton.disabled = true;
       clearCartButton.disabled = true;
+      updateCartMainButton();
       return;
     }
 
@@ -328,6 +444,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     cartTotalElement.textContent = calculateTotal() + " ₽";
     cartTotalElement.classList.toggle("value-updated", Boolean(options.animateTotal));
+    updateCartMainButton();
 
     if (options.animateTotal) {
       window.setTimeout(function () {
@@ -495,6 +612,10 @@ document.addEventListener("DOMContentLoaded", function () {
     var addressInput = document.getElementById("customer-address");
     var commentInput = document.getElementById("customer-comment");
 
+    configureMainButton("Оформить заказ", "#28a745");
+    disableMainButton();
+    showMainButton();
+
     // Автоматически подставляем имя из Telegram в форму заказа.
     if (nameInput && userName) {
       nameInput.value = userName;
@@ -533,69 +654,126 @@ document.addEventListener("DOMContentLoaded", function () {
       phoneInput.addEventListener("input", function () {
         phoneInput.value = formatPhoneValue(phoneInput.value);
         clearFieldError(phoneInput, "phone");
+        updateOrderMainButtonState();
       });
     }
 
     if (nameInput) {
       nameInput.addEventListener("input", function () {
         clearFieldError(nameInput, "name");
+        updateOrderMainButtonState();
       });
     }
 
     if (addressInput) {
       addressInput.addEventListener("input", function () {
         clearFieldError(addressInput, "address");
+        updateOrderMainButtonState();
       });
     }
 
     if (commentInput) {
       commentInput.addEventListener("input", function () {
         clearFieldError(commentInput, "comment");
+        updateOrderMainButtonState();
       });
     }
 
     if (orderForm) {
       orderForm.addEventListener("submit", function (event) {
         event.preventDefault();
+        submitOrder(false);
+      });
+    }
 
-        var formData = {
-          name: nameInput ? nameInput.value.trim() : "",
-          phone: phoneInput ? phoneInput.value.trim() : "",
-          address: addressInput ? addressInput.value.trim() : "",
-          comment: commentInput ? commentInput.value.trim() : ""
-        };
+    onMainButtonClick(function () {
+      submitOrder(true);
+    });
 
-        var isValid = validateOrderForm(formData, {
-          nameInput: nameInput,
-          phoneInput: phoneInput,
-          addressInput: addressInput
-        });
+    updateOrderMainButtonState();
 
-        if (!isValid) {
-          return;
-        }
+    // Получаем актуальные данные формы заказа.
+    function getOrderFormData() {
+      return {
+        name: nameInput ? nameInput.value.trim() : "",
+        phone: phoneInput ? phoneInput.value.trim() : "",
+        address: addressInput ? addressInput.value.trim() : "",
+        comment: commentInput ? commentInput.value.trim() : ""
+      };
+    }
 
-        var order = {
-          id: Math.floor(Math.random() * 1000000000),
-          date: new Date().toISOString(),
-          items: orderCart,
-          total: calculateOrderTotal(orderCart),
-          customer: {
-            name: formData.name,
-            phone: formData.phone,
-            address: formData.address,
-            comment: formData.comment
-          },
+    // Проверяем форму без показа ошибок, чтобы обновлять состояние MainButton.
+    function isOrderFormReady() {
+      var formData = getOrderFormData();
+
+      return formData.name.length >= 2 &&
+        extractPhoneDigits(formData.phone).length === 10 &&
+        formData.address.length >= 10;
+    }
+
+    // Активируем или деактивируем главную кнопку Telegram по состоянию формы.
+    function updateOrderMainButtonState() {
+      if (isOrderFormReady()) {
+        enableMainButton();
+      } else {
+        disableMainButton();
+      }
+    }
+
+    // Сохраняем заказ и переходим на экран успеха.
+    function saveOrderAndRedirect() {
+      var formData = getOrderFormData();
+      var order = {
+        id: Math.floor(Math.random() * 1000000000),
+        date: new Date().toISOString(),
+        items: orderCart,
+        total: calculateOrderTotal(orderCart),
+        customer: {
           name: formData.name,
           phone: formData.phone,
           address: formData.address,
           comment: formData.comment
-        };
+        },
+        name: formData.name,
+        phone: formData.phone,
+        address: formData.address,
+        comment: formData.comment
+      };
 
-        localStorage.setItem("lastOrder", JSON.stringify(order));
-        localStorage.removeItem("lastOrderExpiresAt");
-        window.location.href = "./success.html";
+      localStorage.setItem("lastOrder", JSON.stringify(order));
+      localStorage.removeItem("lastOrderExpiresAt");
+      window.location.href = "./success.html";
+    }
+
+    // Обрабатываем оформление заказа из формы или Telegram MainButton.
+    function submitOrder(fromMainButton) {
+      if (fromMainButton) {
+        triggerHapticFeedback("medium");
+        showMainButtonProgress();
+      }
+
+      var isValid = validateOrderForm(getOrderFormData(), {
+        nameInput: nameInput,
+        phoneInput: phoneInput,
+        addressInput: addressInput
       });
+
+      updateOrderMainButtonState();
+
+      if (!isValid) {
+        hideMainButtonProgress();
+        return;
+      }
+
+      if (fromMainButton) {
+        window.setTimeout(function () {
+          hideMainButtonProgress();
+          saveOrderAndRedirect();
+        }, 500);
+        return;
+      }
+
+      saveOrderAndRedirect();
     }
   }
 

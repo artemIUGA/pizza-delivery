@@ -3,6 +3,8 @@ const { useEffect, useMemo, useRef, useState } = React;
 type Category = "Pizza" | "Drinks" | "Snacks" | "Desserts";
 type Tab = "home" | "favorites" | "profile";
 type PizzaSize = "S" | "M" | "L";
+type Screen = "shop" | "payment";
+type PaymentField = "cardNumber" | "cardHolder" | "expiry" | "cvv";
 
 type TelegramUser = {
   first_name?: string;
@@ -30,9 +32,13 @@ type CartItem = {
 };
 
 type ProductSelections = Record<number, { size: PizzaSize; quantity: number }>;
+type PaymentFormData = Record<PaymentField, string>;
+type PaymentErrors = Partial<Record<PaymentField, string>>;
 
 declare global {
   interface Window {
+    Motion?: any;
+    FramerMotion?: any;
     Telegram?: {
       WebApp?: {
         ready: () => void;
@@ -54,6 +60,10 @@ declare global {
           hide: () => void;
           onClick: (callback: () => void) => void;
           offClick: (callback: () => void) => void;
+        };
+        HapticFeedback?: {
+          impactOccurred: (style: "light" | "medium" | "heavy") => void;
+          notificationOccurred?: (type: "error" | "success" | "warning") => void;
         };
       };
     };
@@ -110,6 +120,20 @@ const fallbackUser: TelegramUser = {
 };
 
 const iconClassName = "h-5 w-5";
+const motionLibrary = window.Motion || window.FramerMotion || {};
+const motion = motionLibrary.motion || {
+  div: "div",
+  section: "section",
+  article: "article",
+  button: "button"
+};
+const AnimatePresence = motionLibrary.AnimatePresence || (({ children }: { children: React.ReactNode }) => <>{children}</>);
+const initialPaymentForm: PaymentFormData = {
+  cardNumber: "",
+  cardHolder: "",
+  expiry: "",
+  cvv: ""
+};
 
 function HomeIcon() {
   return (
@@ -149,15 +173,19 @@ function CartIcon() {
 
 function App() {
   const tg = window.Telegram?.WebApp;
-  const mainButtonHandlerRef = useRef<(() => void) | null>(null);
   const lastScrollYRef = useRef(0);
   const [activeTab, setActiveTab] = useState<Tab>("home");
+  const [screen, setScreen] = useState<Screen>("shop");
   const [activeCategory, setActiveCategory] = useState<Category>("Pizza");
   const [cartOpen, setCartOpen] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [favorites, setFavorites] = useState<number[]>([]);
   const [notice, setNotice] = useState("");
   const [headerHidden, setHeaderHidden] = useState(false);
+  const [paymentForm, setPaymentForm] = useState<PaymentFormData>(initialPaymentForm);
+  const [paymentErrors, setPaymentErrors] = useState<PaymentErrors>({});
+  const [isPaymentProcessing, setIsPaymentProcessing] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [user] = useState<TelegramUser>(tg?.initDataUnsafe?.user || fallbackUser);
   const [theme] = useState(() => {
     const isDark = tg?.colorScheme === "dark";
@@ -259,36 +287,24 @@ function App() {
     [cart]
   );
 
+  const deliveryFee = totalItems > 0 ? 3 : 0;
+  const finalTotal = totalPrice + deliveryFee;
+
   useEffect(() => {
-    if (!tg?.MainButton) {
+    tg?.MainButton?.hide();
+  }, [screen, tg]);
+
+  useEffect(() => {
+    if (!paymentSuccess) {
       return;
     }
 
-    const handler = () => {
-      window.alert("Заказ оформлен");
-      setCart([]);
-      setCartOpen(false);
-      setNotice("Заказ успешно оформлен");
-    };
-
-    if (mainButtonHandlerRef.current) {
-      tg.MainButton.offClick(mainButtonHandlerRef.current);
-    }
-
-    mainButtonHandlerRef.current = handler;
-
-    if (cartOpen && totalItems > 0) {
-      tg.MainButton.setText(`Оплатить ${totalPrice}$`);
-      tg.MainButton.show();
-      tg.MainButton.onClick(handler);
-    } else {
-      tg.MainButton.hide();
-    }
+    const timer = window.setTimeout(returnToHomeAfterPayment, 1800);
 
     return () => {
-      tg.MainButton?.offClick(handler);
+      window.clearTimeout(timer);
     };
-  }, [cartOpen, tg, totalItems, totalPrice]);
+  }, [paymentSuccess]);
 
   const filteredProducts = useMemo(() => {
     if (activeTab === "favorites") {
@@ -373,6 +389,148 @@ function App() {
 
   function removeCartItem(id: number, size: PizzaSize) {
     setCart((prev) => prev.filter((item) => !(item.id === id && item.size === size)));
+  }
+
+  function triggerHaptic(style: "light" | "medium" | "heavy" = "light") {
+    tg?.HapticFeedback?.impactOccurred(style);
+  }
+
+  function formatCardNumber(value: string) {
+    return value
+      .replace(/\D/g, "")
+      .slice(0, 16)
+      .replace(/(.{4})/g, "$1 ")
+      .trim();
+  }
+
+  function formatExpiry(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 4);
+
+    if (digits.length <= 2) {
+      return digits;
+    }
+
+    return digits.slice(0, 2) + "/" + digits.slice(2);
+  }
+
+  function formatCardHolder(value: string) {
+    return value
+      .replace(/[^a-zA-Zа-яА-ЯёЁ\s]/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 28)
+      .toUpperCase();
+  }
+
+  function getCardBrand(cardNumber: string) {
+    const digits = cardNumber.replace(/\D/g, "");
+
+    if (digits.startsWith("4")) {
+      return "VISA";
+    }
+
+    if (/^5[1-5]/.test(digits) || /^2[2-7]/.test(digits)) {
+      return "MASTERCARD";
+    }
+
+    return "BANK";
+  }
+
+  function updatePaymentField(field: PaymentField, value: string) {
+    const nextValue = field === "cardNumber"
+      ? formatCardNumber(value)
+      : field === "cardHolder"
+        ? formatCardHolder(value)
+        : field === "expiry"
+          ? formatExpiry(value)
+          : value.replace(/\D/g, "").slice(0, 3);
+
+    setPaymentForm((prev) => ({
+      ...prev,
+      [field]: nextValue
+    }));
+
+    setPaymentErrors((prev) => ({
+      ...prev,
+      [field]: ""
+    }));
+  }
+
+  function validatePaymentForm() {
+    const nextErrors: PaymentErrors = {};
+    const cardDigits = paymentForm.cardNumber.replace(/\D/g, "");
+    const expiryMatch = paymentForm.expiry.match(/^(\d{2})\/(\d{2})$/);
+
+    if (cardDigits.length !== 16) {
+      nextErrors.cardNumber = "Enter a valid 16-digit card number";
+    }
+
+    if (paymentForm.cardHolder.trim().length < 3) {
+      nextErrors.cardHolder = "Card holder name is required";
+    }
+
+    if (!expiryMatch) {
+      nextErrors.expiry = "Use MM/YY format";
+    } else {
+      const month = Number(expiryMatch[1]);
+      const year = Number("20" + expiryMatch[2]);
+      const now = new Date();
+      const expiryDate = new Date(year, month);
+
+      if (month < 1 || month > 12 || expiryDate <= now) {
+        nextErrors.expiry = "Enter a valid future date";
+      }
+    }
+
+    if (paymentForm.cvv.length !== 3) {
+      nextErrors.cvv = "CVV must be 3 digits";
+    }
+
+    setPaymentErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  function openPaymentScreen() {
+    if (!totalItems) {
+      return;
+    }
+
+    triggerHaptic("light");
+    setCartOpen(false);
+    setPaymentForm(initialPaymentForm);
+    setPaymentErrors({});
+    setPaymentSuccess(false);
+    setIsPaymentProcessing(false);
+    setScreen("payment");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function returnToHomeAfterPayment() {
+    setCart([]);
+    setPaymentSuccess(false);
+    setIsPaymentProcessing(false);
+    setPaymentForm(initialPaymentForm);
+    setPaymentErrors({});
+    setActiveTab("home");
+    setScreen("shop");
+    setNotice("Payment completed");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handlePaymentSubmit() {
+    triggerHaptic("medium");
+
+    if (!validatePaymentForm()) {
+      tg?.HapticFeedback?.notificationOccurred?.("error");
+      return;
+    }
+
+    setIsPaymentProcessing(true);
+
+    window.setTimeout(function () {
+      setIsPaymentProcessing(false);
+      setPaymentSuccess(true);
+      tg?.HapticFeedback?.notificationOccurred?.("success");
+    }, 2300);
   }
 
   function renderProductGrid(productsToRender: Product[]) {
@@ -549,6 +707,238 @@ function App() {
     );
   }
 
+  function renderPaymentScreen() {
+    const cardNumberPreview = paymentForm.cardNumber || "1234 5678 9012 3456";
+    const cardHolderPreview = paymentForm.cardHolder || "CARD HOLDER";
+    const expiryPreview = paymentForm.expiry || "MM/YY";
+    const cardBrand = getCardBrand(paymentForm.cardNumber);
+    const paymentSurface = theme.isDark ? "#16110f" : "#fffaf5";
+    const mutedText = theme.isDark ? "#d7b89e" : "#8a5a34";
+
+    return (
+      <div
+        className="min-h-screen pb-36"
+        style={{
+          background: `linear-gradient(180deg, ${theme.isDark ? "#120f14" : "#fff7f0"} 0%, ${theme.isDark ? "#1f1714" : "#fffaf5"} 100%)`,
+          color: theme.text
+        }}
+      >
+        <div className="mx-auto max-w-md px-4 pt-[calc(env(safe-area-inset-top)+14px)]">
+          <header className="mb-5 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic("light");
+                setScreen("shop");
+              }}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#2b1608] shadow-[0_10px_26px_rgba(20,20,20,0.10)] active:scale-95"
+              aria-label="Back"
+            >
+              ←
+            </button>
+            <h1 className="text-2xl font-extrabold">Card Payment</h1>
+          </header>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20, rotateX: -10 }}
+            animate={{ opacity: 1, y: 0, rotateX: 0 }}
+            transition={{ duration: 0.45 }}
+            className="relative mb-5 overflow-hidden rounded-[28px] border border-white/20 bg-[#121826] p-5 text-white shadow-[0_24px_50px_rgba(15,23,42,0.32)]"
+          >
+            <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan-400/25 blur-2xl"></div>
+            <div className="absolute -bottom-20 left-8 h-44 w-44 rounded-full bg-fuchsia-500/20 blur-2xl"></div>
+            <div className="relative">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-white/55">Demo Card</p>
+                  <p className="mt-1 text-sm text-white/75">Pizza Delivery</p>
+                </div>
+                <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold backdrop-blur">
+                  {cardBrand}
+                </div>
+              </div>
+
+              <div className="mt-9 h-9 w-12 rounded-xl bg-gradient-to-br from-amber-200 to-amber-500 shadow-inner"></div>
+              <motion.p
+                key={cardNumberPreview}
+                initial={{ opacity: 0.45, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 font-mono text-xl font-semibold tracking-[0.12em]"
+              >
+                {cardNumberPreview}
+              </motion.p>
+
+              <div className="mt-6 grid grid-cols-[1fr_auto] gap-4 text-xs uppercase text-white/50">
+                <div>
+                  <p>Card Holder</p>
+                  <p className="mt-1 truncate text-sm font-bold tracking-wide text-white">{cardHolderPreview}</p>
+                </div>
+                <div className="text-right">
+                  <p>Expires</p>
+                  <p className="mt-1 text-sm font-bold tracking-wide text-white">{expiryPreview}</p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          <section
+            className="mb-4 rounded-[24px] border p-4 shadow-[0_16px_34px_rgba(15,23,42,0.08)]"
+            style={{ background: paymentSurface, borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffd7ba" }}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Order Summary</h2>
+              <span className="text-sm font-semibold" style={{ color: mutedText }}>{totalItems} items</span>
+            </div>
+
+            <div className="space-y-3">
+              {cart.map((item) => (
+                <div key={`${item.id}-${item.size}`} className="flex items-center gap-3">
+                  <img src={item.image} alt={item.title} className="h-14 w-14 rounded-2xl object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold">{item.title}</p>
+                    <p className="text-xs" style={{ color: mutedText }}>Size {item.size} • Qty {item.quantity}</p>
+                  </div>
+                  <span className="text-sm font-bold">${item.price * item.quantity}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffe1c7" }}>
+              <div className="flex justify-between" style={{ color: mutedText }}>
+                <span>Subtotal</span>
+                <span>${totalPrice}</span>
+              </div>
+              <div className="flex justify-between" style={{ color: mutedText }}>
+                <span>Delivery fee</span>
+                <span>${deliveryFee}</span>
+              </div>
+              <div className="flex justify-between text-lg font-extrabold">
+                <span>Final total</span>
+                <span>${finalTotal}</span>
+              </div>
+            </div>
+          </section>
+
+          <section
+            className="rounded-[24px] border p-4 shadow-[0_16px_34px_rgba(15,23,42,0.08)]"
+            style={{ background: paymentSurface, borderColor: theme.isDark ? "rgba(255,255,255,0.08)" : "#ffd7ba" }}
+          >
+            <h2 className="mb-4 text-lg font-bold">Bank Card</h2>
+
+            <div className="space-y-4">
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Card Number</span>
+                <input
+                  value={paymentForm.cardNumber}
+                  onChange={(event) => updatePaymentField("cardNumber", event.target.value)}
+                  inputMode="numeric"
+                  placeholder="1234 5678 9012 3456"
+                  className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 font-mono text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                />
+                {paymentErrors.cardNumber && <p className="mt-1 text-xs font-semibold text-red-500">{paymentErrors.cardNumber}</p>}
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Card Holder Name</span>
+                <input
+                  value={paymentForm.cardHolder}
+                  onChange={(event) => updatePaymentField("cardHolder", event.target.value)}
+                  placeholder="ALEX IVANOV"
+                  className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 text-base font-bold uppercase tracking-wide text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                />
+                {paymentErrors.cardHolder && <p className="mt-1 text-xs font-semibold text-red-500">{paymentErrors.cardHolder}</p>}
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>Expiration</span>
+                  <input
+                    value={paymentForm.expiry}
+                    onChange={(event) => updatePaymentField("expiry", event.target.value)}
+                    inputMode="numeric"
+                    placeholder="MM/YY"
+                    className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 font-mono text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                  />
+                  {paymentErrors.expiry && <p className="mt-1 text-xs font-semibold text-red-500">{paymentErrors.expiry}</p>}
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: mutedText }}>CVV</span>
+                  <input
+                    value={paymentForm.cvv}
+                    onChange={(event) => updatePaymentField("cvv", event.target.value)}
+                    inputMode="numeric"
+                    type="password"
+                    placeholder="123"
+                    className="mt-2 w-full rounded-2xl border border-transparent bg-[#f3eee9] px-4 py-3 font-mono text-base text-[#1f1714] outline-none transition focus:border-[#ff6900] focus:bg-white"
+                  />
+                  {paymentErrors.cvv && <p className="mt-1 text-xs font-semibold text-red-500">{paymentErrors.cvv}</p>}
+                </label>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-white/20 bg-white/90 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-16px_30px_rgba(15,23,42,0.10)] backdrop-blur">
+          <div className="mx-auto max-w-md">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.97 }}
+              onClick={handlePaymentSubmit}
+              disabled={isPaymentProcessing || paymentSuccess}
+              className="flex w-full items-center justify-center rounded-2xl bg-[#111827] py-4 text-base font-extrabold text-white shadow-[0_16px_32px_rgba(17,24,39,0.24)] disabled:opacity-70"
+            >
+              {isPaymentProcessing ? "Processing..." : "Pay Now"}
+            </motion.button>
+          </div>
+        </div>
+
+        <AnimatePresence>
+          {(isPaymentProcessing || paymentSuccess) && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-6 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 18 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="w-full max-w-sm rounded-[28px] bg-white p-7 text-center text-[#132015] shadow-[0_28px_70px_rgba(0,0,0,0.24)]"
+              >
+                {paymentSuccess ? (
+                  <>
+                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-[#22c55e] text-4xl text-white">✓</div>
+                    <h2 className="mt-5 text-2xl font-extrabold">Payment Successful</h2>
+                    <p className="mt-2 text-sm leading-6 text-[#5d6b62]">Your order is being prepared</p>
+                    <button
+                      type="button"
+                      onClick={returnToHomeAfterPayment}
+                      className="mt-6 w-full rounded-2xl bg-[#22c55e] py-3 text-sm font-bold text-white active:scale-95"
+                    >
+                      Return Home
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="mx-auto h-16 w-16 animate-spin rounded-full border-4 border-[#dbeafe] border-t-[#2563eb]"></div>
+                    <h2 className="mt-5 text-xl font-extrabold">Processing Payment</h2>
+                    <p className="mt-2 text-sm text-[#5d6b62]">Secure demo transaction in progress</p>
+                  </>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
+  if (screen === "payment") {
+    return renderPaymentScreen();
+  }
+
   return (
     <div
       className="min-h-screen"
@@ -679,12 +1069,11 @@ function App() {
                     return;
                   }
 
-                  setCartOpen(false);
-                  window.location.href = "./order.html";
+                  openPaymentScreen();
                 }}
                 className="mt-4 w-full rounded-2xl bg-[#ff6900] py-3 text-sm font-semibold text-white"
               >
-                Оформить заказ
+                Checkout
               </button>
             </div>
           </div>
